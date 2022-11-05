@@ -130,7 +130,7 @@ abstract contract DAOShareholder{
     delete s_requests[_requestId];
   }
 
-  function approveVote(bytes32 _requestId) external shareholderAccess validRequestShare(_requestId){
+  function approvingRequest(bytes32 _requestId) external shareholderAccess validRequestShare(_requestId){
     if(s_votes[_requestId].approvers[msg.sender] == s_shareholders.shares[msg.sender]) revert();
 
     uint256 votedShares = s_votes[_requestId].approvers[msg.sender];
