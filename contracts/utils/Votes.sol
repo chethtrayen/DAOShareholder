@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: SEE LICENSE IN LICENSE
 pragma solidity ^0.8.7;
 
-import './Shareholders.sol';
-
 library Votes {
 
   struct Vote{
@@ -21,7 +19,7 @@ library Votes {
     vote.approvers[holder] = shares;
   }
 
-  function checkApproval(Vote storage vote, uint256 approvalLimit) internal view returns (bool){
-    return approvalLimit < vote.approval;
+  function checkApproval(Vote storage vote, uint256 approvalNeeded) internal view returns (bool){
+    return approvalNeeded <= vote.approval;
   }
 }

@@ -10,7 +10,6 @@ library Requests {
     uint256 lock;
   }
 
-
   function checkUpkeep (Request storage request) internal view returns (bool){
     return block.timestamp > request.upkeepTime;
   }
