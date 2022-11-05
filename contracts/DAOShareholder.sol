@@ -47,7 +47,7 @@ abstract contract DAOShareholder{
     _;
   }
 
-  modifier requestExists(bytes requestId){
+  modifier requestExists(bytes32 requestId){
     if(s_requests[requestId].requester == address(0)) revert();
     _;
   }
@@ -134,7 +134,7 @@ abstract contract DAOShareholder{
 
   function performAction(bytes32 requestId) external {
     (bool approved, bool upkeep) = checkUpkeep(requestId);
-    
+
     if(!upkeep) revert();
     
     if(approved) approveRequest(requestId);
