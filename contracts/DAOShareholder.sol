@@ -45,7 +45,8 @@ abstract contract DAOShareholder{
   struct Request{
     address requester;
     uint256 shares;
-    uint256 expires;
+    uint256 upkeepTime;
+    uint256 lock;
   }
 
   mapping(address => uint256) private s_requesterNonce; // shareholder => nonce
@@ -62,7 +63,7 @@ abstract contract DAOShareholder{
   }
 
   modifier requestExpires(bytes32 _requestId){
-    if(block.timestamp > s_requests[_requestId].expires) revert();
+    if(block.timestamp > s_requests[_requestId].lock) revert();
     _;
   }
 
@@ -112,14 +113,15 @@ abstract contract DAOShareholder{
     }
 
     s_shareholders.shares[requester] += s_requests[_requestId].shares;
-    delete s_requests[_requestId];
   }
 
   function createRequest(uint256 _requestedShares) external validShares(_requestedShares){
     s_requesterNonce[msg.sender] += 1;
 
     bytes32 requestId = keccak256(abi.encode(msg.sender, s_requesterNonce[msg.sender] , _requestedShares));
-    s_requests[requestId] = Request(msg.sender, _requestedShares, block.timestamp + BASE_TTL);
+    uint256 lockTimer =  block.timestamp + BASE_TTL;
+    uint256 upkeepTimer = lockTimer + 1000;
+    s_requests[requestId] = Request(msg.sender, _requestedShares, upkeepTimer, lockTimer);
   }
 
   function editRequest(bytes32 _requestId, uint256 _shares) external validShares(_shares) requesterAccess(_requestId){
@@ -135,16 +137,40 @@ abstract contract DAOShareholder{
 
     uint256 votedShares = s_votes[_requestId].approvers[msg.sender];
     uint256 currentShares = s_shareholders.shares[msg.sender];
+
+    s_votes[_requestId].approvalAmount  = s_votes[_requestId].approvalAmount - votedShares + currentShares;
+    s_votes[_requestId].approvers[msg.sender] = currentShares; 
+  }
+
+
+  function checkUpkeep(bytes32 _requestId) internal view returns (bool, bool) {
+    uint256 votedShares = s_votes[_requestId].approvers[msg.sender];
+    uint256 currentShares = s_shareholders.shares[msg.sender];
+
+
     uint256 approvalLimit = (i_maxShares - s_freeShares)/2;
     uint256 newApprovalAmount = s_votes[_requestId].approvalAmount - votedShares + currentShares;
 
-    if(newApprovalAmount >= approvalLimit){
-      approveRequest(_requestId);
+    bool approved = newApprovalAmount >= approvalLimit;
+    bool upkeep = block.timestamp > s_requests[_requestId].upkeepTime;
+
+    return (approved, upkeep);
+  }
+
+  function performAction(bytes32 _requestId) external {
+
+    (bool approved, bool upkeep) = checkUpkeep(_requestId);
+
+    if(upkeep){
+      if(approved){
+        approveRequest(_requestId);
+      }
+
+      delete s_requests[_requestId];
+    }else{
+      revert();
     }
-    else{
-      s_votes[_requestId].approvalAmount  = newApprovalAmount;
-      s_votes[_requestId].approvers[msg.sender] = currentShares;
-    }
+  
   }
 
   function releaseShares() public shareholderAccess {
