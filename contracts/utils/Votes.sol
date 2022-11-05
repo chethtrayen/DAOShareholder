@@ -11,14 +11,14 @@ library Votes {
     mapping(address => uint256) approvers;
   }
 
-  function update(Vote storage vote, address holder, uint256 currentShares) internal {
-    if(vote.approvers[holder] == currentShares) revert();
+  function update(Vote storage vote, address holder, uint256 shares) internal {
+    if(vote.approvers[holder] == shares) revert();
 
-    uint256 updatedApproval = vote.approval - vote.approvers[holder] + currentShares;
+    uint256 updatedApproval = vote.approval - vote.approvers[holder] + shares;
 
     vote.approval = updatedApproval;
 
-    vote.approvers[holder] = currentShares;
+    vote.approvers[holder] = shares;
   }
 
   function checkApproval(Vote storage vote, uint256 approvalLimit) internal view returns (bool){

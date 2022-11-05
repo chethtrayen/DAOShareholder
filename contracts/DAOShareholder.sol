@@ -110,7 +110,29 @@ abstract contract DAOShareholder{
     s_votes[requestId].update(msg.sender, currentShares);
   }
 
-  function checkUpkeep(bytes32 requestId) internal view returns (bool, bool) {
+  function removeVote(bytes32 requestId) external shareholderAccess validRequestShare(requestId){
+    s_votes[requestId].update(msg.sender, 0);
+  }
+  
+  function releaseShares() external shareholderAccess {
+    s_shareholders.updateShares(msg.sender, 0);
+  }
+
+  function transferShares(address receiver, uint256 shares) external shareholderAccess hasShares(shares){
+    if(s_shareholders.shares[receiver] == 0){
+      revert();
+    }
+
+    uint256 removedShares = s_shareholders.shares[msg.sender] - shares;
+
+    s_shareholders.updateShares(msg.sender, removedShares);
+
+    uint256 addedShares = s_shareholders.shares[receiver] + shares;
+
+    s_shareholders.updateShares(msg.sender, addedShares);
+  }
+
+    function checkUpkeep(bytes32 requestId) internal view returns (bool, bool) {
     uint256 approvalNeeded = (i_maxShares - s_freeShares)/2;
 
     bool approved = s_votes[requestId].checkApproval(approvalNeeded);
@@ -132,23 +154,5 @@ abstract contract DAOShareholder{
     }else{
       revert();
     }
-  }
-
-  function releaseShares() public shareholderAccess {
-    s_shareholders.updateShares(msg.sender, 0);
-  }
-
-  function transferShares(address receiver, uint256 shares) public shareholderAccess hasShares(shares){
-    if(s_shareholders.shares[receiver] == 0){
-      revert();
-    }
-
-    uint256 removedShares = s_shareholders.shares[msg.sender] - shares;
-
-    s_shareholders.updateShares(msg.sender, removedShares);
-
-    uint256 addedShares = s_shareholders.shares[receiver] + shares;
-
-    s_shareholders.updateShares(msg.sender, addedShares);
   }
 }
