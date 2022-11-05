@@ -14,11 +14,6 @@ abstract contract DAOShareholder{
 
   address private immutable i_coordinator;
 
-  modifier coordinatorAccess(){
-    if(msg.sender != i_coordinator) revert();
-    _;
-  }
-
   Shareholders.Shareholder private s_shareholders;
 
   modifier shareholderAccess(){
@@ -42,23 +37,18 @@ abstract contract DAOShareholder{
   mapping(address => uint256) private s_requesterNonce; // shareholder => nonce
   mapping(bytes32 => Requests.Request) private s_requests; // requestId => request
 
-  modifier pendingRequest(bytes32 requestId){
-    if(s_requests[requestId].requester == address(0)) revert();
-    _;
-  }
-
-  modifier requesterAccess(bytes32 requestId){
+  modifier requestAccess(bytes32 requestId){
     if(s_requests[requestId].requester != msg.sender) revert();
-    _;
-  }
-
-  modifier requestExpires(bytes32 requestId){
-    if(block.timestamp > s_requests[requestId].lock) revert();
     _;
   }
 
   modifier validRequestShare(bytes32 requestId){
     if(s_requests[requestId].shares < s_freeShares) revert();
+    _;
+  }
+
+  modifier requestExists(bytes requestId){
+    if(s_requests[requestId].requester == address(0)) revert();
     _;
   }
 
@@ -77,6 +67,8 @@ abstract contract DAOShareholder{
   }
 
   function approveRequest(bytes32 requestId) internal{
+    
+
     address requester = s_requests[requestId].requester;
 
     uint256 shares = s_requests[requestId].shares;
@@ -96,11 +88,11 @@ abstract contract DAOShareholder{
     s_requests[requestId] = Requests.Request(msg.sender, shares, upkeepTimer, lockTimer);
   }
 
-  function editRequest(bytes32 requestId, uint256 shares) external validShares(shares) requesterAccess(requestId){
+  function editRequest(bytes32 requestId, uint256 shares) external validShares(shares) requestAccess(requestId) requestExists(requestId){
     s_requests[requestId].shares = shares;
   }
 
-   function removeRequest(bytes32 requestId) external requesterAccess(requestId){
+   function removeRequest(bytes32 requestId) external requestAccess(requestId)  requestExists(requestId){
     delete s_requests[requestId];
   }
 
@@ -119,9 +111,7 @@ abstract contract DAOShareholder{
   }
 
   function transferShares(address receiver, uint256 shares) external shareholderAccess hasShares(shares){
-    if(s_shareholders.shares[receiver] == 0){
-      revert();
-    }
+    if(s_shareholders.shares[receiver] == 0) revert();
 
     uint256 removedShares = s_shareholders.shares[msg.sender] - shares;
 
@@ -144,15 +134,11 @@ abstract contract DAOShareholder{
 
   function performAction(bytes32 requestId) external {
     (bool approved, bool upkeep) = checkUpkeep(requestId);
-
-    if(upkeep){
-      if(approved){
-        approveRequest(requestId);
-      }
-
-      delete s_requests[requestId];
-    }else{
-      revert();
-    }
+    
+    if(!upkeep) revert();
+    
+    if(approved) approveRequest(requestId);
+      
+    delete s_requests[requestId];
   }
 }
