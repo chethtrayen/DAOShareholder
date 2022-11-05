@@ -2,7 +2,8 @@
 pragma solidity ^0.8.7;
 
 abstract contract DAOShareholder{
-  
+  uint8 constant BASE_TTL = 7;
+
   address private immutable i_coordinator;
 
   modifier coordinatorAccess(){
@@ -13,6 +14,7 @@ abstract contract DAOShareholder{
   struct Shareholder{
     mapping(address => uint256) shares;
     address[] holders;
+    mapping(address => uint256) keys;
   }
 
   Shareholder private s_shareholders;
@@ -43,6 +45,7 @@ abstract contract DAOShareholder{
   struct Request{
     address requester;
     uint256 shares;
+    uint256 expires;
   }
 
   mapping(address => uint256) private s_requesterNonce; // shareholder => nonce
@@ -58,17 +61,22 @@ abstract contract DAOShareholder{
     _;
   }
 
+  modifier requestExpires(bytes32 _requestId){
+    if(block.timestamp > s_requests[_requestId].expires) revert();
+    _;
+  }
+
+  modifier validRequestShare(bytes32 _requestId){
+    if(s_requests[_requestId].shares < s_freeShares) revert();
+    _;
+  }
+
   struct Vote{
-    address[] approved;
-    mapping(address => bool) voted;
+    uint256 approvalAmount;
+    mapping(address => uint256) approvers;
   }
 
   mapping(bytes32 => Vote) s_votes; 
-
-  modifier hasVoted(bytes32 _requestId) {
-    if(s_votes[_requestId].voted[msg.sender]) revert();
-    _;
-  }
 
   constructor(uint256 _shares, uint256 _deployerShares){
     if(_shares < _deployerShares) revert();
@@ -80,38 +88,38 @@ abstract contract DAOShareholder{
 
     s_shareholders.shares[msg.sender] = _deployerShares;
     s_shareholders.holders.push(msg.sender);
+    s_shareholders.keys[msg.sender] = 1;
   }
 
   function removeShareholder(address _shareholder) internal {
-    uint256 lastIndex = s_shareholders.holders.length - 1;
+    uint256 last = s_shareholders.holders.length - 1;
+    address lastHolder = s_shareholders.holders[last];
+    uint256 removeHolderKey = s_shareholders.keys[_shareholder] - 1;
 
-    for(uint256 i = 0; i < s_shareholders.holders.length; i++){
-      if(s_shareholders.holders[i] == _shareholder){
-        address last = s_shareholders.holders[lastIndex];
-        s_shareholders.holders[i] = last;
-
-        s_shareholders.holders.pop();
-        break;
-      }
-    }
+    s_shareholders.holders[removeHolderKey] = lastHolder;
+    s_shareholders.keys[lastHolder] = removeHolderKey;
+    
+    s_shareholders.holders.pop();
+    delete s_shareholders.keys[_shareholder];
   }
 
   function approveRequest(bytes32 _requestId) internal{
     address requester = s_requests[_requestId].requester;
 
     if(s_shareholders.shares[requester] == 0){
-      s_shareholders.holders.push(msg.sender);
+      s_shareholders.holders.push(requester);
+      s_shareholders.keys[requester] = s_shareholders.holders.length;
     }
 
     s_shareholders.shares[requester] += s_requests[_requestId].shares;
     delete s_requests[_requestId];
   }
 
-  function requestShares(uint256 _requestedShares) external validShares(_requestedShares){
+  function createRequest(uint256 _requestedShares) external validShares(_requestedShares){
     s_requesterNonce[msg.sender] += 1;
 
     bytes32 requestId = keccak256(abi.encode(msg.sender, s_requesterNonce[msg.sender] , _requestedShares));
-    s_requests[requestId] = Request(msg.sender, _requestedShares);
+    s_requests[requestId] = Request(msg.sender, _requestedShares, block.timestamp + BASE_TTL);
   }
 
   function editRequest(bytes32 _requestId, uint256 _shares) external validShares(_shares) requesterAccess(_requestId){
@@ -122,13 +130,21 @@ abstract contract DAOShareholder{
     delete s_requests[_requestId];
   }
 
-  function approveVote(bytes32 _requestId) external shareholderAccess hasVoted(_requestId){
-    s_votes[_requestId].voted[msg.sender] = true;
-    s_votes[_requestId].approved.push(msg.sender);
-  }
+  function approveVote(bytes32 _requestId) external shareholderAccess validRequestShare(_requestId){
+    if(s_votes[_requestId].approvers[msg.sender] == s_shareholders.shares[msg.sender]) revert();
 
-  function denyVote(bytes32 _requestId) external shareholderAccess hasVoted(_requestId){
-    s_votes[_requestId].voted[msg.sender] = true;
+    uint256 votedShares = s_votes[_requestId].approvers[msg.sender];
+    uint256 currentShares = s_shareholders.shares[msg.sender];
+    uint256 approvalLimit = (i_maxShares - s_freeShares)/2;
+    uint256 newApprovalAmount = s_votes[_requestId].approvalAmount - votedShares + currentShares;
+
+    if(newApprovalAmount >= approvalLimit){
+      approveRequest(_requestId);
+    }
+    else{
+      s_votes[_requestId].approvalAmount  = newApprovalAmount;
+      s_votes[_requestId].approvers[msg.sender] = currentShares;
+    }
   }
 
   function releaseShares() public shareholderAccess {
@@ -149,48 +165,6 @@ abstract contract DAOShareholder{
     if(s_shareholders.shares[msg.sender] == 0){
       removeShareholder(msg.sender);
     }
-  }
-
-  function determineRequestVote(bytes32 _requestId) internal coordinatorAccess pendingRequest(_requestId) validShares(s_requests[_requestId].shares){
-    uint256 approval = 0;
-    address[] memory approvedVotes = s_votes[_requestId].approved;
-
-    for(uint256 i = 0; i < approvedVotes.length; i++){
-      address voter = approvedVotes[i];
-      approval += s_shareholders.shares[voter];
-    }
-
-    uint256 approvalLimit = i_maxShares/2;
-
-    if(approval > approvalLimit){
-      approveRequest(_requestId);
-    }
-
-    delete s_requests[_requestId];
-    delete s_votes[_requestId];
-  }
-
-  function determineRequestVoteRaw(bytes32 _requestId) external coordinatorAccess{
-    determineRequestVote(_requestId);
-  }
-
-  function calculateVotes(mapping(uint256 => address[]) storage _votes, uint256[] memory _ballots) internal view returns (uint256[] memory, uint256[] memory){
-    uint256[] memory ballot;
-    uint256[] memory values;
-
-    for(uint256 i = 0; i < _ballots.length; i++){
-      address[] memory voters = _votes[_ballots[i]];
-      uint256 votedValue;
-
-      for(uint256 j = 0; j < voters.length; j++){
-        votedValue += s_shareholders.shares[voters[j]];
-      }
-
-      ballot[i] = _ballots[i];
-      values[i] = votedValue;
-    }
-
-    return (ballot, values);
   }
 
 }
