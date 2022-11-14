@@ -2,7 +2,6 @@
 pragma solidity ^0.8.7;
 
 library Requests {
-  
   struct Request{
     address requester;
     uint256 shares;

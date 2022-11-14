@@ -9,3 +9,5 @@ module.exports = async ({ getNamedAccounts, deployments }) => {
     args: [1000, 100]
   })
 }
+
+module.exports.tags = ['all'];

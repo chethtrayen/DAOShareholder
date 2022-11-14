@@ -1,5 +1,5 @@
 require("@nomicfoundation/hardhat-toolbox");
-require('hardhat-deploy')
+require("hardhat-deploy")
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
@@ -9,6 +9,9 @@ module.exports = {
     {
       default: 0,
       1: 0
+    },
+    other: {
+      default: 1,
     }
   }
 };

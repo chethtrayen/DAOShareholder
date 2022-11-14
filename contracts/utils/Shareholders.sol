@@ -2,7 +2,6 @@
 pragma solidity ^0.8.7;
 
 library Shareholders {
-  
   struct Shareholder{
     mapping(address => uint256) shares;
     address[] holders;
@@ -41,5 +40,9 @@ library Shareholders {
     }else{
       shareholder.shares[holder] = shares;
     }
+  }
+
+  function getShares(Shareholder storage shareholder, address holder) internal view returns (uint256){
+    return shareholder.shares[holder];
   }
 }

@@ -2,7 +2,6 @@
 pragma solidity ^0.8.7;
 
 library Votes {
-
   struct Vote{
     uint256 approval;
 
