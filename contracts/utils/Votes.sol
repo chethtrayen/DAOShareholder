@@ -2,23 +2,69 @@
 pragma solidity ^0.8.7;
 
 library Votes {
+
+  struct Voter {
+    uint256 shares;
+    bool approved;
+  }
+
   struct Vote{
     uint256 approval;
+    uint256 rejection;
 
+    mapping(address => uint256) rejectors;
     mapping(address => uint256) approvers;
+
+    mapping(address => Voter) voters;
   }
 
-  function update(Vote storage vote, address holder, uint256 shares) internal {
-    if(vote.approvers[holder] == shares) revert();
+  function add(Vote storage votes, address holder, uint256 shares, bool approved) internal {  
+    if(votes.voters[holder].shares > 0) revert();
 
-    uint256 updatedApproval = vote.approval - vote.approvers[holder] + shares;
+    votes.voters[holder].shares = shares;
+    votes.voters[holder].approved = approved;
 
-    vote.approval = updatedApproval;
-
-    vote.approvers[holder] = shares;
+    if(approved){
+      votes.approval += shares;
+    }
+    else{
+      votes.rejection += shares;
+    }
   }
 
-  function checkApproval(Vote storage vote, uint256 approvalNeeded) internal view returns (bool){
-    return approvalNeeded <= vote.approval;
+  function updateShares(Vote storage votes, address holder, uint256 shares) internal {  
+    if(votes.voters[holder].shares == 0) return;
+
+    if(votes.voters[holder].approved){
+      votes.approval -= votes.voters[holder].shares + shares;
+    }
+    else{
+      votes.rejection -=  votes.voters[holder].shares + shares;
+    }
+
+    if(shares == 0){
+      delete votes.voters[holder];
+    }
+  }
+
+  function updateVote(Vote storage votes, address holder, bool approved) internal {
+    if(votes.voters[holder].approved == approved) revert();
+
+    uint256 shares = votes.voters[holder].shares;
+    
+    if(approved){
+      votes.approval += shares;
+      votes.rejection -= shares;
+    }
+    else{
+      votes.approval -= shares;
+      votes.rejection += shares;
+    }
+
+    votes.voters[holder].approved = approved;
+  }
+
+  function checkVotes(uint256 shareAmount, uint256 sharesNeeded) internal pure returns (bool){
+    return sharesNeeded <= shareAmount;
   }
 }

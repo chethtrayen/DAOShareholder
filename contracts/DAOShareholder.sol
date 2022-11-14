@@ -7,12 +7,11 @@ import "./utils/Shareholders.sol";
 
 abstract contract DAOShareholder{
   using Votes for Votes.Vote;
+  using Votes for uint256;
   using Requests for Requests.Request;
   using Shareholders for Shareholders.Shareholder;
 
   uint16 constant BASE_TTL = 1000;
-
-  address private immutable i_coordinator;
 
   Shareholders.Shareholder private s_shareholders;
 
@@ -21,49 +20,27 @@ abstract contract DAOShareholder{
     _;
   }
 
-  modifier hasShares(uint256 shares){
-    if(s_shareholders.shares[msg.sender] < shares) revert();
-    _;
-  }
-
   uint256 private s_freeShares;
   
   uint256 private immutable i_maxShares;
 
-  modifier validShares(uint256 requestedShares) {
-    if(s_freeShares < requestedShares || requestedShares == 0) revert();
-    _;
-  }
-
   mapping(address => uint256) private s_requesterNonce; // shareholder => nonce
 
-  mapping(bytes32 => Requests.Request) private s_requests; // requestId => request
-
-  modifier requestAccess(bytes32 requestId){
-    if(s_requests[requestId].requester != msg.sender) revert();
-    _;
-  }
+  Requests.Request private s_request;
 
   event RequestShares(bytes32 indexed requestId, uint256 indexed shares);
 
   event CompleteRequest(bytes32 indexed requestId, bool indexed approved);
 
-  modifier validRequestShare(bytes32 requestId){
-    if(s_requests[requestId].shares < s_freeShares) revert();
-    _;
-  }
-
   modifier requestExists(bytes32 requestId){
-    if(s_requests[requestId].requester == address(0)) revert();
+    if(s_request.requestId == requestId) revert();
     _;
   }
 
-  mapping(bytes32 => Votes.Vote) s_votes; 
+  Votes.Vote private s_votes;
 
   constructor(uint256 shares, uint256 deployerShares){
     if(shares < deployerShares) revert();
-
-    i_coordinator = msg.sender;
 
     s_freeShares = shares - deployerShares;
 
@@ -72,52 +49,69 @@ abstract contract DAOShareholder{
     s_shareholders.addShares(msg.sender, deployerShares);
   }
 
-  function approveRequest(bytes32 requestId) internal{
-    address requester = s_requests[requestId].requester;
-
-    uint256 shares = s_requests[requestId].shares;
-
-    s_shareholders.addShares(requester, shares);
+  function cleanupRequestAndVotes() internal {
+    delete s_request;
+    delete s_votes;
   }
 
-  function createRequest(uint256 shares) external validShares(shares){
+  function approveRequest() internal{
+    s_shareholders.addShares(s_request.requester, s_request.shares);
+    cleanupRequestAndVotes();
+  }
+
+  function rejectRequest() internal{
+    cleanupRequestAndVotes();
+  }
+
+  function createRequest(uint256 shares) external{
+    if(s_request.checkUpkeep() == false) revert();
+
+    if(s_freeShares < shares || shares == 0) revert();
+
     s_requesterNonce[msg.sender] += 1;
+
+    if(s_shareholders.holders.length == 1 && s_shareholders.holders[0] == msg.sender){
+      approveRequest();
+      return;
+    }
 
     bytes32 requestId = keccak256(abi.encode(msg.sender, s_requesterNonce[msg.sender] , shares));
 
-    uint256 lockTimer =  block.timestamp + BASE_TTL;
+    uint256 upkeepTimer =  block.timestamp + BASE_TTL;
 
-    uint256 upkeepTimer = lockTimer + 1000;
-
-    s_requests[requestId] = Requests.Request(msg.sender, shares, upkeepTimer, lockTimer);
+    s_request = Requests.Request(requestId, msg.sender, shares, upkeepTimer);
 
     emit RequestShares(requestId, shares);
   }
 
-  function editRequest(bytes32 requestId, uint256 shares) external validShares(shares) requestAccess(requestId) requestExists(requestId){
-    s_requests[requestId].shares = shares;
+   function removeRequest(bytes32 requestId) external requestExists(requestId){
+    if(s_request.requester != msg.sender) revert();
+
+    rejectRequest();
   }
 
-   function removeRequest(bytes32 requestId) external requestAccess(requestId)  requestExists(requestId){
-    delete s_requests[requestId];
-  }
+  function addVote(bool approved, bytes32 requestId) external shareholderAccess requestExists(requestId){
+    if(s_request.requester == msg.sender) revert();
 
-  function updateVote(bytes32 requestId) external shareholderAccess validRequestShare(requestId){
-    uint256 currentShares = s_shareholders.shares[msg.sender];
+    s_votes.add(msg.sender, s_shareholders.shares[msg.sender], approved);
+    
+    uint256 sharesNeeded = (i_maxShares - s_freeShares)/2;
 
-    s_votes[requestId].update(msg.sender, currentShares);
-  }
-
-  function removeVote(bytes32 requestId) external shareholderAccess validRequestShare(requestId){
-    s_votes[requestId].update(msg.sender, 0);
+    if(approved){
+      if(s_votes.approval.checkVotes(sharesNeeded)) approveRequest();
+    }else{
+      if(s_votes.rejection.checkVotes(sharesNeeded)) rejectRequest();
+    }
   }
   
   function releaseShares() external shareholderAccess {
     s_shareholders.updateShares(msg.sender, 0);
+
+    s_votes.updateShares(msg.sender, 0);
   }
 
-  function transferShares(address receiver, uint256 shares) external shareholderAccess hasShares(shares){
-    if(s_shareholders.shares[receiver] == 0) revert();
+  function transferShares(address receiver, uint256 shares) external shareholderAccess{
+    if(s_shareholders.shares[receiver] == 0 && s_shareholders.shares[msg.sender] < shares) revert();
 
     uint256 removedShares = s_shareholders.shares[msg.sender] - shares;
 
@@ -125,32 +119,15 @@ abstract contract DAOShareholder{
 
     s_shareholders.updateShares(msg.sender, removedShares);
 
-    s_shareholders.updateShares(msg.sender, addedShares);
-  }
+    s_shareholders.updateShares(receiver, addedShares);
 
-  function checkUpkeep(bytes32 requestId) internal view returns (bool) {
-    bool upkeep = s_requests[requestId].checkUpkeep();
+    s_votes.updateShares(msg.sender, removedShares);
 
-    if(!upkeep) revert();
-
-    uint256 approvalNeeded = (i_maxShares - s_freeShares)/2;
-
-    bool approved = s_votes[requestId].checkApproval(approvalNeeded);
-
-    return approved;
-  }
-
-  function performAction(bytes32 requestId) external {
-    bool approved = checkUpkeep(requestId);
-    
-    if(approved) approveRequest(requestId);
-
-    emit CompleteRequest(requestId, approved);
-
-    delete s_requests[requestId];
+    s_votes.updateShares(receiver, addedShares);
   }
 
   function getShares() external view returns (uint256){
     return s_shareholders.getShares(msg.sender);
   }
+
 }
